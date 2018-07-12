@@ -1,14 +1,24 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
+ 
+ /*
 #include "opencv2/core.hpp"
 #include "opencv2/highgui.hpp"	
 #include "opencv2/imgproc.hpp"
 #include "opencv2/videoio.hpp"
 #include "CoreMinimal.h"
+ */
+
 #include "GameFramework/Actor.h"
-#include "Runtime/Engine/Classes/Engine/Texture2D.h"
+//#include "Runtime/Engine/Classes/Engine/Texture2D.h"
+
+#include "FaceRecognition.h"
+#include <array>
+#include <vector>
 #include "WebcamReader.generated.h"
+
+
 
 UCLASS()
 class OPENCVTESTING_API AWebcamReader : public AActor
@@ -22,6 +32,8 @@ public:
 
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// Called every frame
 	virtual void Tick(float DeltaSeconds) override;
@@ -65,8 +77,8 @@ public:
 	cv::Size size;
 
 	// OpenCV prototypes
-	void UpdateFrame();
-	void DoProcessing();
+	 
+	//void DoProcessing();
 	void UpdateTexture();
 
 	// If the stream has succesfully opened yet
@@ -91,11 +103,22 @@ protected:
 	// NOTE: There is a method called UpdateTextureRegions in UTexture2D but it is compiled WITH_EDITOR and is not marked as ENGINE_API so it cannot be linked
 	// from plugins.
 	// FROM: https://wiki.unrealengine.com/Dynamic_Textures
-	void UpdateTextureRegions(UTexture2D* Texture, int32 MipIndex, uint32 NumRegions, FUpdateTextureRegion2D* Regions, uint32 SrcPitch, uint32 SrcBpp, uint8* SrcData, bool bFreeData);
+	//void UpdateTextureRegions(UTexture2D* Texture, int32 MipIndex, uint32 NumRegions, FUpdateTextureRegion2D* Regions, uint32 SrcPitch, uint32 SrcBpp, uint8* SrcData, bool bFreeData);
 
 	// Pointer to update texture region 2D struct
-	FUpdateTextureRegion2D* VideoUpdateTextureRegion;
+	//FUpdateTextureRegion2D* VideoUpdateTextureRegion;
 
+	void UpdateFrame();
+	void UpdateTextureSlow();
+
+	FaceRecognition* faceRecognition;
+	std::vector<uchar> buffer;
+	FString GetClassifierFilePath();
 	
+	float FrameUpdateTime;
+
+	FVector2D ActualVideoSize;
+	bool bGotActualVideoSize;
+	void UpdateActualVideoSize();
 	
 };

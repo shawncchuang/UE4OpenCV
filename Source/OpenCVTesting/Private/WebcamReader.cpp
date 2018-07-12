@@ -1,11 +1,12 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "WebcamReader.h"
-#include "OpenCVTesting.h"
-#include <iostream>
+#include "Engine.h"
 
-using namespace cv;
-using namespace std;
+//#include "OpenCVTesting.h"
+//#include <iostream>
+//using namespace cv;
+//using namespace std;
  
 
 // Sets default values
@@ -19,14 +20,26 @@ AWebcamReader::AWebcamReader()
 	OperationMode = 0;
 	RefreshRate = 15;
 	isStreamOpen = false;
-	VideoSize = FVector2D(0, 0);
+	VideoSize = FVector2D(320, 240);
 	ShouldResize = false;
 	ResizeDeminsions = FVector2D(320, 240);
 	RefreshTimer = 0.0f;
 	stream = cv::VideoCapture();
 	frame = cv::Mat();
+	buffer.reserve(320 * 240 * 3);
 
+#ifdef __clang__
+#pragma clang diagnostic ignored "-Wmissing-braces"
+#endif
 }
+
+FString AWebcamReader::GetClassifierFilePath()
+{
+
+	FString ClassifierFilePath = FPaths::Combine(*FPaths::GameContentDir(), *FString("data/lbpcascade_frontalface.xml"));
+	return ClassifierFilePath;
+}
+
 
 // Called when the game starts or when spawned
 void AWebcamReader::BeginPlay()
@@ -34,28 +47,90 @@ void AWebcamReader::BeginPlay()
 	Super::BeginPlay();
 	
 	// Open the stream
-	stream.open(CameraID);
-	if (stream.isOpened())
-	{
+	//stream.open(CameraID);
+	//if (stream.isOpened())
+	//{
 		// Initialize stream
-		isStreamOpen = true;
-		UpdateFrame();
-		VideoSize = FVector2D(frame.cols, frame.rows);
-		size = cv::Size(ResizeDeminsions.X, ResizeDeminsions.Y);
+		//isStreamOpen = true;
+		//UpdateFrame();
+		//VideoSize = FVector2D(frame.cols, frame.rows);
+		//size = cv::Size(ResizeDeminsions.X, ResizeDeminsions.Y);
 		VideoTexture = UTexture2D::CreateTransient(VideoSize.X, VideoSize.Y);
 		VideoTexture->UpdateResource();
-		VideoUpdateTextureRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, VideoSize.X, VideoSize.Y);
+		//VideoUpdateTextureRegion = new FUpdateTextureRegion2D(0, 0, 0, 0, VideoSize.X, VideoSize.Y);
+		bGotActualVideoSize = false;
 
+		faceRecognition = new FaceRecognition();
+
+		FString ClassifierFilePath = GetClassifierFilePath();
+		bool loadResult = faceRecognition->loadClassifierFile(TCHAR_TO_UTF8(*ClassifierFilePath));
+		if (!loadResult)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("Can not load classifier file: ") + ClassifierFilePath);
+		}
+		isStreamOpen = faceRecognition->captureCamera(CameraID, VideoSize.X, VideoSize.Y);
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,FString::Printf(TEXT("isStreamOpen : %s"), isStreamOpen?TEXT("true"):TEXT("false")));
 		// Initialize data array
-		Data.Init(FColor(0, 0, 0, 255), VideoSize.X * VideoSize.Y);
+		//Data.Init(FColor(0, 0, 0, 255), VideoSize.X * VideoSize.Y);
 
 		// Do first frame
-		DoProcessing();
-		UpdateTexture();
-		OnNextVideoFrame();
-	}
+		//DoProcessing();
+		//UpdateTexture();
+		//OnNextVideoFrame();
+	//}
 
 }
+
+void AWebcamReader::UpdateActualVideoSize()
+{
+	if (isStreamOpen)
+	{
+		int width, height;
+		bool sizeResult = faceRecognition->getActualVideoSize(width, height);
+		//GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("sizeResult : %s"), sizeResult ? TEXT("true") : TEXT("false")));
+		if (!sizeResult)
+		{
+			return;
+		}
+		//GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Blue, TEXT("Actual video size is ") + FString::FromInt(width) + TEXT("x") + FString::FromInt(height));
+		ActualVideoSize = FVector2D(width, height);
+
+		VideoTexture = UTexture2D::CreateTransient(ActualVideoSize.X, ActualVideoSize.Y);
+		VideoTexture->UpdateResource();
+
+		//Initialize data array
+		Data.Init(FColor(0, 0, 0, 255), ActualVideoSize.X * ActualVideoSize.Y);
+
+		bGotActualVideoSize = true;
+	}
+
+
+}
+
+void AWebcamReader::UpdateTextureSlow()
+{
+	if (isStreamOpen && buffer.size() && VideoTexture)
+	{
+		//Copy Mat data to Data array
+		for (int y = 0; y < ActualVideoSize.Y; y++)
+		{
+			for (int x = 0; x < ActualVideoSize.X; x++)
+			{
+				int i = x + (y * ActualVideoSize.X);
+				Data[i].B = buffer[i * 3 + 0];
+				Data[i].G = buffer[i * 3 + 1];
+				Data[i].R = buffer[i * 3 + 2];
+			}
+		}
+
+		FTexture2DMipMap& Mip = VideoTexture->PlatformData->Mips[0];
+		void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
+		FMemory::Memcpy(TextureData, (uint8*)Data.GetData(), 4 * Data.Num());
+		Mip.BulkData.Unlock();
+		VideoTexture->UpdateResource();
+	}
+}
+
 
 // Called every frame
 void AWebcamReader::Tick(float DeltaTime)
@@ -66,10 +141,21 @@ void AWebcamReader::Tick(float DeltaTime)
 	if (isStreamOpen && RefreshTimer >= 1.0f / RefreshRate)
 	{
 		RefreshTimer -= 1.0f / RefreshRate;
-		UpdateFrame();
-		DoProcessing();
-		UpdateTexture();
-		OnNextVideoFrame();
+		//GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("bGotActualVideoSize : %s"), bGotActualVideoSize ? TEXT("true") : TEXT("false")));
+		if (!bGotActualVideoSize)
+		{
+			UpdateActualVideoSize();
+		}
+		else
+		{
+			UpdateFrame();
+			UpdateTextureSlow();
+			OnNextVideoFrame();
+		}
+		FrameUpdateTime = 0.0f;
+		//DoProcessing();
+		//UpdateTexture();
+		
 	}
 }
 
@@ -81,6 +167,7 @@ void AWebcamReader::ChangeOperation()
 
 void AWebcamReader::UpdateFrame()
 {
+	/*
 	if (stream.isOpened())
 	{
 		stream.read(frame);
@@ -92,8 +179,17 @@ void AWebcamReader::UpdateFrame()
 	else {
 		isStreamOpen = false;
 	}
-}
+	*/
 
+	if (isStreamOpen)
+	{
+	 
+		 
+		faceRecognition->update(buffer);
+	}
+
+}
+/*
 void AWebcamReader::DoProcessing()
 {
 	// TODO: Do any processing with frame here!
@@ -117,7 +213,8 @@ void AWebcamReader::DoProcessing()
 	}
 
 }
-
+*/
+ 
 void AWebcamReader::UpdateTexture()
 {
 	if (isStreamOpen && frame.data)
@@ -135,10 +232,11 @@ void AWebcamReader::UpdateTexture()
 		}
 
 		// Update texture 2D
-		UpdateTextureRegions(VideoTexture, (int32)0, (uint32)1, VideoUpdateTextureRegion, (uint32)(4 * VideoSize.X), (uint32)4, (uint8*)Data.GetData(), false);
+		//UpdateTextureRegions(VideoTexture, (int32)0, (uint32)1, VideoUpdateTextureRegion, (uint32)(4 * VideoSize.X), (uint32)4, (uint8*)Data.GetData(), false);
 	}
 }
-
+ 
+/*
 void AWebcamReader::UpdateTextureRegions(UTexture2D* Texture, int32 MipIndex, uint32 NumRegions, FUpdateTextureRegion2D* Regions, uint32 SrcPitch, uint32 SrcBpp, uint8* SrcData, bool bFreeData)
 {
 	if (Texture->Resource)
@@ -193,4 +291,20 @@ void AWebcamReader::UpdateTextureRegions(UTexture2D* Texture, int32 MipIndex, ui
 		delete RegionData;
 			});
 	}
+}
+*/
+
+void AWebcamReader::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	/*
+	Super::EndPlay(EndPlayReason);
+	if (faceRecognition)
+	{
+		faceRecognition->releaseCamera();
+		delete faceRecognition;
+
+	}
+
+	isStreamOpen = false;
+	*/
 }
